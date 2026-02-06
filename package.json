@@ -5,6 +5,7 @@
   "main": "index.js",
   "scripts": {
     "scrape": "node scrapeIntents.js",
+    "scrape:live": "node scrapeIntentsLive.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "repository": {
@@ -16,6 +17,7 @@
   "license": "ISC",
   "dependencies": {
     "cheerio": "^1.2.0",
-    "exceljs": "^4.4.0"
+    "exceljs": "^4.4.0",
+    "puppeteer-core": "^24.37.2"
   }
 }
