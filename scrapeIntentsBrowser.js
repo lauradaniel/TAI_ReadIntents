@@ -11,12 +11,11 @@
  *    4. Copy-paste this ENTIRE script into the console and press Enter.
  *    5. The script will:
  *       - Expand every collapsed tree node
- *       - Click each intent to load its detail panel
- *       - Extract Category, Topic, Intent, Percentage, Volume, Examples, Active
- *       - Download the result as an Excel (.xlsx) file
+ *       - Click the FIRST intent and discover the detail panel structure
+ *       - Click each remaining intent and extract examples
+ *       - Download the result as .xlsx and .csv files
  *
- *  NOTE: The script includes a built-in lightweight XLSX writer so it has
- *        zero external dependencies. Just paste and run.
+ *  NOTE: Zero external dependencies. Just paste and run.
  * ============================================================================
  */
 
@@ -25,60 +24,49 @@
 
   // ── Configuration ──────────────────────────────────────────────────────
   const EXPAND_DELAY   = 1000;  // ms to wait after expanding a tree node
-  const CLICK_DELAY    = 2000;  // ms to wait after clicking an intent for detail panel
+  const CLICK_DELAY    = 2500;  // ms to wait after clicking an intent
   const BETWEEN_CLICKS = 300;   // ms between sequential intent clicks
 
   // ── Helpers ────────────────────────────────────────────────────────────
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   function log(msg) {
-    console.log(`%c[CXOne Scraper] ${msg}`, 'color: #2196F3; font-weight: bold;');
+    console.log('%c[CXOne Scraper] ' + msg, 'color: #2196F3; font-weight: bold;');
   }
-
-  function logProgress(current, total, text) {
-    const pct = ((current / total) * 100).toFixed(1);
-    console.log(
-      `%c[CXOne Scraper] [${current}/${total} — ${pct}%] ${text}`,
-      'color: #4CAF50;'
-    );
+  function logProgress(cur, tot, text) {
+    console.log('%c[CXOne Scraper] [' + cur + '/' + tot + ' - ' + ((cur/tot)*100).toFixed(1) + '%] ' + text, 'color: #4CAF50;');
   }
-
   function logWarn(msg) {
-    console.log(`%c[CXOne Scraper] ⚠ ${msg}`, 'color: #FF9800; font-weight: bold;');
+    console.log('%c[CXOne Scraper] WARNING: ' + msg, 'color: #FF9800; font-weight: bold;');
+  }
+  function logDebug(msg) {
+    console.log('%c[CXOne Scraper][DEBUG] ' + msg, 'color: #9E9E9E;');
   }
 
-  // ── Step 1: Verify we are on the right page ────────────────────────────
+  // ── Step 1: Verify page ────────────────────────────────────────────────
   log('Starting CXOne Intent Scraper...');
 
   const kanbanPanel = document.querySelector('.kanban-view-panel');
   if (!kanbanPanel) {
-    logWarn('Could not find .kanban-view-panel on this page.');
-    logWarn('Make sure you are on the CXOne Intent Builder page.');
+    logWarn('Could not find .kanban-view-panel. Are you on the Intent Builder page?');
     return;
   }
 
   // ── Step 2: Expand all collapsed tree nodes ────────────────────────────
-  log('Step 1/4: Expanding all collapsed tree nodes...');
+  log('Step 1/5: Expanding all collapsed tree nodes...');
 
   let expandedTotal = 0;
   let passNum = 0;
 
   while (true) {
     passNum++;
-    // Collapsed nodes have a chevronrighticon inside the toggler button
     const collapsedTogglers = kanbanPanel.querySelectorAll(
       'p-treenode .p-tree-toggler:has(chevronrighticon)'
     );
-
-    // Filter to only visible ones (not inside hidden panels)
-    const visible = Array.from(collapsedTogglers).filter(
-      (el) => el.offsetParent !== null
-    );
-
+    const visible = Array.from(collapsedTogglers).filter(el => el.offsetParent !== null);
     if (visible.length === 0) break;
 
-    log(`  Pass ${passNum}: expanding ${visible.length} collapsed node(s)...`);
-
+    log('  Pass ' + passNum + ': expanding ' + visible.length + ' collapsed node(s)...');
     for (const toggler of visible) {
       toggler.scrollIntoView({ block: 'center', behavior: 'instant' });
       toggler.click();
@@ -86,11 +74,10 @@
       expandedTotal++;
     }
   }
-
-  log(`  Done — expanded ${expandedTotal} node(s) across ${passNum} pass(es).`);
+  log('  Done - expanded ' + expandedTotal + ' node(s).');
 
   // ── Step 3: Collect tree hierarchy ─────────────────────────────────────
-  log('Step 2/4: Collecting Category > Topic > Intent hierarchy...');
+  log('Step 2/5: Collecting Category > Topic > Intent hierarchy...');
 
   const allNodes = kanbanPanel.querySelectorAll('.kanban-tree-node');
   const intentList = [];
@@ -118,406 +105,368 @@
         volume: '',
         examples: '',
         active: '',
-        // Keep reference to the DOM node for clicking
         _nodeEl: node,
       });
     }
   }
 
-  log(`  Found ${intentList.length} Level-3 intents.`);
+  log('  Found ' + intentList.length + ' Level-3 intents.');
+  if (intentList.length === 0) {
+    logWarn('No Level-3 intents found. Is the kanban tree fully expanded?');
+    return;
+  }
 
-  // ── Step 4: Click each intent and scrape detail panel ──────────────────
-  log('Step 3/4: Clicking each intent to extract details...');
-  log(`  This will take approximately ${Math.ceil((intentList.length * (CLICK_DELAY + BETWEEN_CLICKS)) / 1000 / 60)} minutes.`);
+  // ── Step 4: DISCOVERY — snapshot DOM before/after clicking first intent ─
+  log('Step 3/5: Discovery — clicking first intent to find the detail panel...');
 
-  for (let i = 0; i < intentList.length; i++) {
+  // Snapshot all visible leaf-text BEFORE clicking
+  function snapshotLeafTexts() {
+    const result = new Map();
+    const all = document.querySelectorAll('*');
+    for (const el of all) {
+      if (el.children.length > 0) continue;
+      if (el.offsetParent === null && el.offsetHeight === 0) continue;
+      const txt = el.textContent.trim();
+      if (txt.length < 5) continue;
+      // Build a path to identify this element
+      const path = buildPath(el);
+      if (!result.has(path)) {
+        result.set(path, txt);
+      }
+    }
+    return result;
+  }
+
+  function buildPath(el) {
+    const parts = [];
+    let cur = el;
+    let depth = 0;
+    while (cur && cur !== document.body && depth < 10) {
+      let s = cur.tagName.toLowerCase();
+      if (cur.className && typeof cur.className === 'string') {
+        const c = cur.className.trim().split(/\s+/).filter(x => !x.startsWith('ng-')).slice(0, 2).join('.');
+        if (c) s += '.' + c;
+      }
+      parts.unshift(s);
+      cur = cur.parentElement;
+      depth++;
+    }
+    return parts.join(' > ');
+  }
+
+  const beforeSnap = snapshotLeafTexts();
+  logDebug('Before-click snapshot: ' + beforeSnap.size + ' leaf text nodes');
+
+  // Click the first intent
+  const firstItem = intentList[0];
+  const firstContent = firstItem._nodeEl.closest('.p-treenode-content') || firstItem._nodeEl;
+  firstContent.scrollIntoView({ block: 'center', behavior: 'instant' });
+  firstContent.click();
+  await sleep(CLICK_DELAY + 1500); // Extra wait for first load
+
+  const afterSnap = snapshotLeafTexts();
+  logDebug('After-click snapshot: ' + afterSnap.size + ' leaf text nodes');
+
+  // Find NEW elements that appeared after clicking
+  const newTexts = [];
+  for (const [path, txt] of afterSnap) {
+    if (!beforeSnap.has(path)) {
+      newTexts.push({ path, txt });
+    }
+  }
+
+  log('  ' + newTexts.length + ' new text elements appeared after clicking.');
+
+  // Log all new text for debugging
+  logDebug('=== NEW text after clicking "' + firstItem.intent + '" ===');
+  for (const item of newTexts) {
+    logDebug('  [' + item.path + '] "' + item.txt.substring(0, 120) + '"');
+  }
+
+  // Find which new elements are likely examples (sentence-like, 15+ chars,
+  // not percentages, not the intent name itself)
+  const exampleCandidates = newTexts.filter(item => {
+    const t = item.txt;
+    if (t.length < 15 || t.length > 500) return false;
+    if (/^\d+(\.\d+)?%?$/.test(t)) return false;
+    if (t === firstItem.intent) return false;
+    if (t === firstItem.category) return false;
+    if (t === firstItem.topic) return false;
+    return true;
+  });
+
+  logDebug('Example candidates: ' + exampleCandidates.length);
+  for (const c of exampleCandidates) {
+    logDebug('  EXAMPLE? "' + c.txt.substring(0, 100) + '" @ ' + c.path);
+  }
+
+  // Try to find a common parent selector pattern for the example elements
+  let discoveredSelector = null;
+
+  if (exampleCandidates.length > 0) {
+    // Find the CSS class pattern shared by examples
+    // Extract the most specific class from each path
+    const classPatterns = {};
+    for (const c of exampleCandidates) {
+      // Get the last segment of the path (the actual element)
+      const lastSeg = c.path.split(' > ').pop();
+      classPatterns[lastSeg] = (classPatterns[lastSeg] || 0) + 1;
+    }
+
+    // Sort by count - the most repeated pattern is our selector
+    const sorted = Object.entries(classPatterns).sort((a, b) => b[1] - a[1]);
+    if (sorted.length > 0) {
+      discoveredSelector = sorted[0][0];
+      log('  DISCOVERED example selector: "' + discoveredSelector + '" (' + sorted[0][1] + ' matches)');
+    }
+
+    // Store first intent's examples immediately
+    firstItem.examples = exampleCandidates.map(c => c.txt).join(', ');
+    log('  First intent examples: "' + firstItem.examples.substring(0, 100) + '..."');
+  } else {
+    logWarn('  Could not find example text after clicking. Check the DEBUG logs above.');
+    logWarn('  The script will still try broad text matching for remaining intents.');
+  }
+
+  // ── Step 5: Click each remaining intent and scrape ─────────────────────
+  log('Step 4/5: Clicking each intent to extract examples...');
+  const totalTime = Math.ceil((intentList.length * (CLICK_DELAY + BETWEEN_CLICKS)) / 1000 / 60);
+  log('  Estimated time: ~' + totalTime + ' minutes for ' + intentList.length + ' intents.');
+
+  // Start from index 1 since we already did index 0
+  for (let i = 1; i < intentList.length; i++) {
     const item = intentList[i];
 
-    // Click the intent's p-treenode-content (the selectable row)
+    // Take snapshot before click
+    const snapBefore = snapshotLeafTexts();
+
+    // Click the intent
     const treeContent = item._nodeEl.closest('.p-treenode-content') || item._nodeEl;
     treeContent.scrollIntoView({ block: 'center', behavior: 'instant' });
     treeContent.click();
-
     await sleep(CLICK_DELAY);
 
-    // ── Scrape the detail/info panel ──
-    // Strategy: look for .info-body .info-item elements with .sub-title / .item-value
-    const infoItems = document.querySelectorAll('.info-body .info-item');
-    for (const infoItem of infoItems) {
-      const titleEl = infoItem.querySelector('.sub-title');
-      const valueEl = infoItem.querySelector('.item-value');
-      if (!titleEl || !valueEl) continue;
+    // Take snapshot after click
+    const snapAfter = snapshotLeafTexts();
 
-      const title = titleEl.textContent.trim().toLowerCase();
-      const value = valueEl.textContent.trim();
-
-      if (title.includes('volume')) {
-        item.volume = value;
-      } else if (
-        title.includes('example') ||
-        title.includes('sample') ||
-        title.includes('utterance') ||
-        title.includes('training')
-      ) {
-        item.examples = value;
-      } else if (title.includes('active') || title.includes('status')) {
-        item.active = value;
+    // Find new text elements
+    const newItems = [];
+    for (const [path, txt] of snapAfter) {
+      if (!snapBefore.has(path)) {
+        newItems.push({ path, txt });
       }
     }
 
-    // Alternative: look for examples in a separate list/table
-    if (!item.examples) {
-      const exampleEls = document.querySelectorAll(
-        '.sample-list .sample-item, ' +
-        '.example-row, .intent-examples .example-text, ' +
-        '.info-body .examples-list li, ' +
-        '.sentence-list .sentence-item, ' +
-        '.training-phrases .phrase-text'
-      );
-      if (exampleEls.length > 0) {
-        item.examples = Array.from(exampleEls)
-          .map((el) => el.textContent.trim())
-          .filter(Boolean)
-          .join('\n');
-      }
-    }
-
-    // Alternative: look for volume near percentage
-    if (!item.volume) {
-      const statEls = document.querySelectorAll(
-        '.panel-header .stat-value, .intent-stats .volume, ' +
-        '.info-header .volume-value'
-      );
-      for (const stat of statEls) {
-        const text = stat.textContent.trim();
-        if (text && /\d/.test(text)) {
-          item.volume = text;
-          break;
+    // If we have a discovered selector, also try to match by selector
+    if (discoveredSelector) {
+      const els = document.querySelectorAll(discoveredSelector);
+      if (els.length > 0) {
+        const texts = Array.from(els)
+          .map(e => e.textContent.trim())
+          .filter(t => t.length >= 10 && !/^\d+(\.\d+)?%?$/.test(t));
+        if (texts.length > 0) {
+          item.examples = texts.join(', ');
         }
       }
     }
 
-    // Check active status via toggle/checkbox
-    if (!item.active) {
-      const toggle = document.querySelector(
-        '.active-toggle input[type="checkbox"], ' +
-        '.info-body .active-status, ' +
-        'p-checkbox[name*="active"] input'
-      );
-      if (toggle) {
-        item.active = toggle.checked ? 'Yes' : 'No';
+    // If selector didn't work, use the diff approach
+    if (!item.examples) {
+      const candidates = newItems.filter(ni => {
+        const t = ni.txt;
+        if (t.length < 15 || t.length > 500) return false;
+        if (/^\d+(\.\d+)?%?$/.test(t)) return false;
+        if (t === item.intent || t === item.category || t === item.topic) return false;
+        return true;
+      });
+      if (candidates.length > 0) {
+        item.examples = candidates.map(c => c.txt).join(', ');
       }
     }
 
-    logProgress(
-      i + 1,
-      intentList.length,
-      `${item.category} > ${item.topic} > ${item.intent}`
-    );
-
+    const exCount = item.examples ? item.examples.split(', ').length : 0;
+    logProgress(i + 1, intentList.length, item.category + ' > ' + item.topic + ' > ' + item.intent + ' (' + exCount + ' examples)');
     await sleep(BETWEEN_CLICKS);
   }
 
-  // Clean up DOM references before export
-  const rows = intentList.map(({ _nodeEl, ...rest }) => rest);
+  // Log the first intent result (already scraped in discovery)
+  logProgress(1, intentList.length, firstItem.category + ' > ' + firstItem.topic + ' > ' + firstItem.intent + ' (' + (firstItem.examples ? firstItem.examples.split(', ').length : 0) + ' examples)');
 
-  // ── Step 5: Generate and download Excel file ───────────────────────────
-  log('Step 4/4: Generating Excel file...');
+  // Clean up DOM references
+  const rows = intentList.map(function(item) {
+    return {
+      category: item.category,
+      topic: item.topic,
+      intent: item.intent,
+      intentPercentage: item.intentPercentage,
+      volume: item.volume,
+      examples: item.examples,
+      active: item.active
+    };
+  });
 
+  // ── Step 6: Download ───────────────────────────────────────────────────
+  log('Step 5/5: Generating Excel file...');
   downloadExcel(rows);
 
-  // Print summary
-  const categories = [...new Set(rows.map((r) => r.category))];
-  const withExamples = rows.filter((r) => r.examples).length;
+  const categories = [];
+  const seen = {};
+  for (const r of rows) { if (!seen[r.category]) { seen[r.category] = 1; categories.push(r.category); } }
+  const withExamples = rows.filter(function(r) { return r.examples; }).length;
+
   log('');
   log('=== COMPLETE ===');
-  log(`  Categories:      ${categories.length}`);
-  log(`  Total intents:   ${rows.length}`);
-  log(`  With examples:   ${withExamples}`);
-  log(`  File downloaded: CXOne_Intents_Output.xlsx`);
+  log('  Categories:      ' + categories.length);
+  log('  Total intents:   ' + rows.length);
+  log('  With examples:   ' + withExamples);
+  log('  File downloaded: CXOne_Intents_Output.xlsx');
 
-  // Also log to a table for quick review
   console.table(rows.slice(0, 10));
   if (rows.length > 10) {
-    log(`  ... and ${rows.length - 10} more rows (see the downloaded Excel file).`);
+    log('  ... and ' + (rows.length - 10) + ' more rows (see the downloaded file).');
   }
 
   // ────────────────────────────────────────────────────────────────────────
-  //  Minimal XLSX Generator (no external dependencies)
-  //  Creates a valid .xlsx file using JSZip-free approach with raw ZIP.
+  //  XLSX Generator + CSV + ZIP (zero dependencies)
   // ────────────────────────────────────────────────────────────────────────
 
   function downloadExcel(data) {
-    const headers = [
-      'Category',
-      'Topic',
-      'Intent',
-      'Intent Percentage',
-      'Volume',
-      'Examples',
-      'Active',
-    ];
-    const keys = [
-      'category',
-      'topic',
-      'intent',
-      'intentPercentage',
-      'volume',
-      'examples',
-      'active',
-    ];
+    var headers = ['Category','Topic','Intent','Intent Percentage','Volume','Examples','Active'];
+    var keys = ['category','topic','intent','intentPercentage','volume','examples','active'];
 
-    // Build CSV as a fallback-friendly format, then also produce XLSX
-    // We'll generate a proper XLSX using XML + ZIP
-
-    // ── Build sheet XML ──
-    function escapeXml(s) {
+    function esc(s) {
       if (s == null) return '';
-      return String(s)
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;');
+      return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
     }
-
-    function colLetter(idx) {
-      let s = '';
-      idx++;
-      while (idx > 0) {
-        idx--;
-        s = String.fromCharCode(65 + (idx % 26)) + s;
-        idx = Math.floor(idx / 26);
-      }
+    function col(i) {
+      var s = ''; i++;
+      while (i > 0) { i--; s = String.fromCharCode(65 + (i % 26)) + s; i = Math.floor(i / 26); }
       return s;
     }
 
-    let sheetRows = '';
-    // Header row
-    sheetRows += '<row r="1">';
-    for (let c = 0; c < headers.length; c++) {
-      const ref = colLetter(c) + '1';
-      sheetRows += `<c r="${ref}" t="inlineStr" s="1"><is><t>${escapeXml(headers[c])}</t></is></c>`;
+    var sr = '<row r="1">';
+    for (var c = 0; c < headers.length; c++) {
+      sr += '<c r="' + col(c) + '1" t="inlineStr" s="1"><is><t>' + esc(headers[c]) + '</t></is></c>';
     }
-    sheetRows += '</row>';
-
-    // Data rows
-    for (let r = 0; r < data.length; r++) {
-      const rowNum = r + 2;
-      sheetRows += `<row r="${rowNum}">`;
-      for (let c = 0; c < keys.length; c++) {
-        const ref = colLetter(c) + rowNum;
-        const val = data[r][keys[c]] || '';
-        sheetRows += `<c r="${ref}" t="inlineStr"><is><t>${escapeXml(val)}</t></is></c>`;
+    sr += '</row>';
+    for (var r = 0; r < data.length; r++) {
+      var rn = r + 2;
+      sr += '<row r="' + rn + '">';
+      for (var c2 = 0; c2 < keys.length; c2++) {
+        sr += '<c r="' + col(c2) + rn + '" t="inlineStr"><is><t>' + esc(data[r][keys[c2]] || '') + '</t></is></c>';
       }
-      sheetRows += '</row>';
+      sr += '</row>';
     }
 
-    const lastCol = colLetter(headers.length - 1);
-    const lastRow = data.length + 1;
+    var lc = col(headers.length - 1);
+    var lr = data.length + 1;
 
-    const sheetXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"
-           xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
-  <sheetViews><sheetView tabSelected="1" workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>
-  <cols>
-    <col min="1" max="1" width="25" customWidth="1"/>
-    <col min="2" max="2" width="30" customWidth="1"/>
-    <col min="3" max="3" width="45" customWidth="1"/>
-    <col min="4" max="4" width="18" customWidth="1"/>
-    <col min="5" max="5" width="12" customWidth="1"/>
-    <col min="6" max="6" width="60" customWidth="1"/>
-    <col min="7" max="7" width="10" customWidth="1"/>
-  </cols>
-  <sheetData>${sheetRows}</sheetData>
-  <autoFilter ref="A1:${lastCol}${lastRow}"/>
-</worksheet>`;
+    var sheetXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+      '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">' +
+      '<sheetViews><sheetView tabSelected="1" workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>' +
+      '<cols><col min="1" max="1" width="25" customWidth="1"/><col min="2" max="2" width="30" customWidth="1"/><col min="3" max="3" width="45" customWidth="1"/><col min="4" max="4" width="18" customWidth="1"/><col min="5" max="5" width="12" customWidth="1"/><col min="6" max="6" width="60" customWidth="1"/><col min="7" max="7" width="10" customWidth="1"/></cols>' +
+      '<sheetData>' + sr + '</sheetData>' +
+      '<autoFilter ref="A1:' + lc + lr + '"/></worksheet>';
 
-    const stylesXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
-  <fonts count="2">
-    <font><sz val="11"/><name val="Calibri"/></font>
-    <font><b/><sz val="11"/><color rgb="FFFFFFFF"/><name val="Calibri"/></font>
-  </fonts>
-  <fills count="3">
-    <fill><patternFill patternType="none"/></fill>
-    <fill><patternFill patternType="gray125"/></fill>
-    <fill><patternFill patternType="solid"><fgColor rgb="FF4472C4"/></patternFill></fill>
-  </fills>
-  <borders count="1"><border/></borders>
-  <cellStyleXfs count="1"><xf/></cellStyleXfs>
-  <cellXfs count="2">
-    <xf/>
-    <xf fontId="1" fillId="2" applyFont="1" applyFill="1"><alignment horizontal="center" vertical="center"/></xf>
-  </cellXfs>
-</styleSheet>`;
+    var stylesXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+      '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">' +
+      '<fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><color rgb="FFFFFFFF"/><name val="Calibri"/></font></fonts>' +
+      '<fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF4472C4"/></patternFill></fill></fills>' +
+      '<borders count="1"><border/></borders><cellStyleXfs count="1"><xf/></cellStyleXfs>' +
+      '<cellXfs count="2"><xf/><xf fontId="1" fillId="2" applyFont="1" applyFill="1"><alignment horizontal="center" vertical="center"/></xf></cellXfs></styleSheet>';
 
-    const workbookXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"
-          xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
-  <sheets><sheet name="Intents" sheetId="1" r:id="rId1"/></sheets>
-</workbook>`;
+    var wbXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+      '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">' +
+      '<sheets><sheet name="Intents" sheetId="1" r:id="rId1"/></sheets></workbook>';
 
-    const workbookRelsXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
-  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
-  <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
-</Relationships>`;
+    var wbRels = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+      '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+      '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>' +
+      '<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>';
 
-    const relsXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
-  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
-</Relationships>`;
+    var rels = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+      '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+      '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>';
 
-    const contentTypesXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
-  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
-  <Default Extension="xml" ContentType="application/xml"/>
-  <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
-  <Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
-  <Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>
-</Types>`;
+    var ct = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+      '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">' +
+      '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>' +
+      '<Default Extension="xml" ContentType="application/xml"/>' +
+      '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>' +
+      '<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>' +
+      '<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>';
 
-    // ── Build ZIP (minimal implementation) ──
-    const files = [
-      { name: '[Content_Types].xml', content: contentTypesXml },
-      { name: '_rels/.rels', content: relsXml },
-      { name: 'xl/workbook.xml', content: workbookXml },
-      { name: 'xl/_rels/workbook.xml.rels', content: workbookRelsXml },
-      { name: 'xl/styles.xml', content: stylesXml },
-      { name: 'xl/worksheets/sheet1.xml', content: sheetXml },
-    ];
+    var blob = buildZip([
+      {name:'[Content_Types].xml', content:ct},
+      {name:'_rels/.rels', content:rels},
+      {name:'xl/workbook.xml', content:wbXml},
+      {name:'xl/_rels/workbook.xml.rels', content:wbRels},
+      {name:'xl/styles.xml', content:stylesXml},
+      {name:'xl/worksheets/sheet1.xml', content:sheetXml}
+    ]);
 
-    const blob = buildZipBlob(files);
-
-    // Trigger download
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'CXOne_Intents_Output.xlsx';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-
+    dl(blob, 'CXOne_Intents_Output.xlsx');
     log('  Excel file download triggered.');
 
-    // Also download CSV as backup
-    downloadCsv(data, headers, keys);
-  }
-
-  function downloadCsv(data, headers, keys) {
-    const csvRows = [headers.join(',')];
-    for (const row of data) {
-      csvRows.push(
-        keys.map((k) => {
-          const v = (row[k] || '').replace(/"/g, '""');
-          return `"${v}"`;
-        }).join(',')
-      );
+    // CSV backup
+    var csv = [headers.join(',')];
+    for (var ri = 0; ri < data.length; ri++) {
+      csv.push(keys.map(function(k) { return '"' + (data[ri][k]||'').replace(/"/g,'""') + '"'; }).join(','));
     }
-    const csvBlob = new Blob([csvRows.join('\n')], { type: 'text/csv' });
-    const url = URL.createObjectURL(csvBlob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'CXOne_Intents_Output.csv';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    dl(new Blob([csv.join('\n')], {type:'text/csv'}), 'CXOne_Intents_Output.csv');
     log('  CSV backup also downloaded.');
   }
 
-  // ── Minimal ZIP builder (STORE, no compression needed for XML) ─────────
-  function buildZipBlob(files) {
-    const enc = new TextEncoder();
-    const parts = [];
-    const centralDir = [];
-    let offset = 0;
-
-    for (const file of files) {
-      const nameBytes = enc.encode(file.name);
-      const contentBytes = enc.encode(file.content);
-
-      const crc = crc32(contentBytes);
-      const size = contentBytes.length;
-
-      // Local file header (30 + nameLen + contentLen)
-      const localHeader = new Uint8Array(30 + nameBytes.length);
-      const lv = new DataView(localHeader.buffer);
-      lv.setUint32(0, 0x04034b50, true);  // signature
-      lv.setUint16(4, 20, true);           // version needed
-      lv.setUint16(6, 0, true);            // flags
-      lv.setUint16(8, 0, true);            // compression: STORE
-      lv.setUint16(10, 0, true);           // mod time
-      lv.setUint16(12, 0, true);           // mod date
-      lv.setUint32(14, crc, true);         // crc32
-      lv.setUint32(18, size, true);        // compressed size
-      lv.setUint32(22, size, true);        // uncompressed size
-      lv.setUint16(26, nameBytes.length, true);
-      lv.setUint16(28, 0, true);           // extra field length
-      localHeader.set(nameBytes, 30);
-
-      parts.push(localHeader, contentBytes);
-
-      // Central directory entry
-      const cdEntry = new Uint8Array(46 + nameBytes.length);
-      const cv = new DataView(cdEntry.buffer);
-      cv.setUint32(0, 0x02014b50, true);   // signature
-      cv.setUint16(4, 20, true);           // version made by
-      cv.setUint16(6, 20, true);           // version needed
-      cv.setUint16(8, 0, true);            // flags
-      cv.setUint16(10, 0, true);           // compression
-      cv.setUint16(12, 0, true);           // mod time
-      cv.setUint16(14, 0, true);           // mod date
-      cv.setUint32(16, crc, true);
-      cv.setUint32(20, size, true);
-      cv.setUint32(24, size, true);
-      cv.setUint16(28, nameBytes.length, true);
-      cv.setUint16(30, 0, true);           // extra field length
-      cv.setUint16(32, 0, true);           // comment length
-      cv.setUint16(34, 0, true);           // disk number
-      cv.setUint16(36, 0, true);           // internal attributes
-      cv.setUint32(38, 0, true);           // external attributes
-      cv.setUint32(42, offset, true);      // local header offset
-      cdEntry.set(nameBytes, 46);
-
-      centralDir.push(cdEntry);
-      offset += localHeader.length + contentBytes.length;
-    }
-
-    const cdOffset = offset;
-    let cdSize = 0;
-    for (const cd of centralDir) {
-      parts.push(cd);
-      cdSize += cd.length;
-    }
-
-    // End of central directory
-    const eocd = new Uint8Array(22);
-    const ev = new DataView(eocd.buffer);
-    ev.setUint32(0, 0x06054b50, true);
-    ev.setUint16(4, 0, true);
-    ev.setUint16(6, 0, true);
-    ev.setUint16(8, files.length, true);
-    ev.setUint16(10, files.length, true);
-    ev.setUint32(12, cdSize, true);
-    ev.setUint32(16, cdOffset, true);
-    ev.setUint16(20, 0, true);
-    parts.push(eocd);
-
-    return new Blob(parts, {
-      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    });
+  function dl(blob, name) {
+    var u = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = u; a.download = name;
+    document.body.appendChild(a); a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(u);
   }
 
-  function crc32(bytes) {
-    let crc = 0xffffffff;
-    for (let i = 0; i < bytes.length; i++) {
-      crc ^= bytes[i];
-      for (let j = 0; j < 8; j++) {
-        crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0);
-      }
+  function buildZip(files) {
+    var enc = new TextEncoder();
+    var parts = [], cd = [], off = 0;
+    for (var i = 0; i < files.length; i++) {
+      var nb = enc.encode(files[i].name);
+      var cb = enc.encode(files[i].content);
+      var cr = crc32(cb), sz = cb.length;
+
+      var lh = new Uint8Array(30 + nb.length);
+      var lv = new DataView(lh.buffer);
+      lv.setUint32(0,0x04034b50,true); lv.setUint16(4,20,true);
+      lv.setUint16(8,0,true); lv.setUint32(14,cr,true);
+      lv.setUint32(18,sz,true); lv.setUint32(22,sz,true);
+      lv.setUint16(26,nb.length,true); lh.set(nb,30);
+      parts.push(lh, cb);
+
+      var ce = new Uint8Array(46 + nb.length);
+      var cv = new DataView(ce.buffer);
+      cv.setUint32(0,0x02014b50,true); cv.setUint16(4,20,true); cv.setUint16(6,20,true);
+      cv.setUint32(16,cr,true); cv.setUint32(20,sz,true); cv.setUint32(24,sz,true);
+      cv.setUint16(28,nb.length,true); cv.setUint32(42,off,true);
+      ce.set(nb,46); cd.push(ce);
+      off += lh.length + cb.length;
     }
-    return (crc ^ 0xffffffff) >>> 0;
+    var cdOff = off, cdSz = 0;
+    for (var j = 0; j < cd.length; j++) { parts.push(cd[j]); cdSz += cd[j].length; }
+    var eo = new Uint8Array(22);
+    var ev = new DataView(eo.buffer);
+    ev.setUint32(0,0x06054b50,true);
+    ev.setUint16(8,files.length,true); ev.setUint16(10,files.length,true);
+    ev.setUint32(12,cdSz,true); ev.setUint32(16,cdOff,true);
+    parts.push(eo);
+    return new Blob(parts,{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+  }
+
+  function crc32(b) {
+    var c = 0xffffffff;
+    for (var i = 0; i < b.length; i++) {
+      c ^= b[i];
+      for (var j = 0; j < 8; j++) c = (c >>> 1) ^ (c & 1 ? 0xedb88320 : 0);
+    }
+    return (c ^ 0xffffffff) >>> 0;
   }
 })();
