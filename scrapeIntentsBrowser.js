@@ -94,6 +94,9 @@
     } else if (cls.includes('node-level-2')) {
       currentTopic = name;
     } else if (cls.includes('node-level-3')) {
+      // Read the Active label from .new-item-label inside the node
+      const activeEl = node.querySelector('.new-item-label');
+      const activeText = activeEl ? activeEl.textContent.trim() : '';
       intentList.push({
         category: currentCategory,
         topic: currentTopic,
@@ -101,7 +104,7 @@
         intentPercentage: pct,
         volume: '',
         examples: '',
-        active: '',
+        active: activeText,
         _nodeEl: node,
       });
     }
@@ -161,6 +164,14 @@
           const lines = allText.split('\n').map(l => l.trim()).filter(l => l.length > 0);
           item.examples = lines.join('\n');
         }
+      }
+    }
+
+    // If Active wasn't found during tree collection, try again now
+    if (!item.active) {
+      const activeEl = item._nodeEl.querySelector('.new-item-label');
+      if (activeEl) {
+        item.active = activeEl.textContent.trim();
       }
     }
 
