@@ -11,8 +11,8 @@
  *    4. Copy-paste this ENTIRE script into the console and press Enter.
  *    5. The script will:
  *       - Expand every collapsed tree node
- *       - Click the FIRST intent and discover the detail panel structure
- *       - Click each remaining intent and extract examples
+ *       - Click each intent to open its detail panel
+ *       - Read phrases from .phrases-snippets-container
  *       - Download the result as .xlsx and .csv files
  *
  *  NOTE: Zero external dependencies. Just paste and run.
@@ -39,9 +39,6 @@
   function logWarn(msg) {
     console.log('%c[CXOne Scraper] WARNING: ' + msg, 'color: #FF9800; font-weight: bold;');
   }
-  function logDebug(msg) {
-    console.log('%c[CXOne Scraper][DEBUG] ' + msg, 'color: #9E9E9E;');
-  }
 
   // ── Step 1: Verify page ────────────────────────────────────────────────
   log('Starting CXOne Intent Scraper...');
@@ -53,7 +50,7 @@
   }
 
   // ── Step 2: Expand all collapsed tree nodes ────────────────────────────
-  log('Step 1/5: Expanding all collapsed tree nodes...');
+  log('Step 1/4: Expanding all collapsed tree nodes...');
 
   let expandedTotal = 0;
   let passNum = 0;
@@ -77,7 +74,7 @@
   log('  Done - expanded ' + expandedTotal + ' node(s).');
 
   // ── Step 3: Collect tree hierarchy ─────────────────────────────────────
-  log('Step 2/5: Collecting Category > Topic > Intent hierarchy...');
+  log('Step 2/4: Collecting Category > Topic > Intent hierarchy...');
 
   const allNodes = kanbanPanel.querySelectorAll('.kanban-tree-node');
   const intentList = [];
@@ -116,181 +113,50 @@
     return;
   }
 
-  // ── Step 4: DISCOVERY — snapshot DOM before/after clicking first intent ─
-  log('Step 3/5: Discovery — clicking first intent to find the detail panel...');
-
-  // Snapshot all visible leaf-text BEFORE clicking
-  function snapshotLeafTexts() {
-    const result = new Map();
-    const all = document.querySelectorAll('*');
-    for (const el of all) {
-      if (el.children.length > 0) continue;
-      if (el.offsetParent === null && el.offsetHeight === 0) continue;
-      const txt = el.textContent.trim();
-      if (txt.length < 5) continue;
-      // Build a path to identify this element
-      const path = buildPath(el);
-      if (!result.has(path)) {
-        result.set(path, txt);
-      }
-    }
-    return result;
-  }
-
-  function buildPath(el) {
-    const parts = [];
-    let cur = el;
-    let depth = 0;
-    while (cur && cur !== document.body && depth < 10) {
-      let s = cur.tagName.toLowerCase();
-      if (cur.className && typeof cur.className === 'string') {
-        const c = cur.className.trim().split(/\s+/).filter(x => !x.startsWith('ng-')).slice(0, 2).join('.');
-        if (c) s += '.' + c;
-      }
-      parts.unshift(s);
-      cur = cur.parentElement;
-      depth++;
-    }
-    return parts.join(' > ');
-  }
-
-  const beforeSnap = snapshotLeafTexts();
-  logDebug('Before-click snapshot: ' + beforeSnap.size + ' leaf text nodes');
-
-  // Click the first intent
-  const firstItem = intentList[0];
-  const firstContent = firstItem._nodeEl.closest('.p-treenode-content') || firstItem._nodeEl;
-  firstContent.scrollIntoView({ block: 'center', behavior: 'instant' });
-  firstContent.click();
-  await sleep(CLICK_DELAY + 1500); // Extra wait for first load
-
-  const afterSnap = snapshotLeafTexts();
-  logDebug('After-click snapshot: ' + afterSnap.size + ' leaf text nodes');
-
-  // Find NEW elements that appeared after clicking
-  const newTexts = [];
-  for (const [path, txt] of afterSnap) {
-    if (!beforeSnap.has(path)) {
-      newTexts.push({ path, txt });
-    }
-  }
-
-  log('  ' + newTexts.length + ' new text elements appeared after clicking.');
-
-  // Log all new text for debugging
-  logDebug('=== NEW text after clicking "' + firstItem.intent + '" ===');
-  for (const item of newTexts) {
-    logDebug('  [' + item.path + '] "' + item.txt.substring(0, 120) + '"');
-  }
-
-  // Find which new elements are likely examples (sentence-like, 15+ chars,
-  // not percentages, not the intent name itself)
-  const exampleCandidates = newTexts.filter(item => {
-    const t = item.txt;
-    if (t.length < 15 || t.length > 500) return false;
-    if (/^\d+(\.\d+)?%?$/.test(t)) return false;
-    if (t === firstItem.intent) return false;
-    if (t === firstItem.category) return false;
-    if (t === firstItem.topic) return false;
-    return true;
-  });
-
-  logDebug('Example candidates: ' + exampleCandidates.length);
-  for (const c of exampleCandidates) {
-    logDebug('  EXAMPLE? "' + c.txt.substring(0, 100) + '" @ ' + c.path);
-  }
-
-  // Try to find a common parent selector pattern for the example elements
-  let discoveredSelector = null;
-
-  if (exampleCandidates.length > 0) {
-    // Find the CSS class pattern shared by examples
-    // Extract the most specific class from each path
-    const classPatterns = {};
-    for (const c of exampleCandidates) {
-      // Get the last segment of the path (the actual element)
-      const lastSeg = c.path.split(' > ').pop();
-      classPatterns[lastSeg] = (classPatterns[lastSeg] || 0) + 1;
-    }
-
-    // Sort by count - the most repeated pattern is our selector
-    const sorted = Object.entries(classPatterns).sort((a, b) => b[1] - a[1]);
-    if (sorted.length > 0) {
-      discoveredSelector = sorted[0][0];
-      log('  DISCOVERED example selector: "' + discoveredSelector + '" (' + sorted[0][1] + ' matches)');
-    }
-
-    // Store first intent's examples immediately
-    firstItem.examples = exampleCandidates.map(c => c.txt).join(', ');
-    log('  First intent examples: "' + firstItem.examples.substring(0, 100) + '..."');
-  } else {
-    logWarn('  Could not find example text after clicking. Check the DEBUG logs above.');
-    logWarn('  The script will still try broad text matching for remaining intents.');
-  }
-
-  // ── Step 5: Click each remaining intent and scrape ─────────────────────
-  log('Step 4/5: Clicking each intent to extract examples...');
-  const totalTime = Math.ceil((intentList.length * (CLICK_DELAY + BETWEEN_CLICKS)) / 1000 / 60);
+  // ── Step 4: Click each intent and read phrases ─────────────────────────
+  log('Step 3/4: Clicking each intent to extract phrases...');
+  var totalTime = Math.ceil((intentList.length * (CLICK_DELAY + BETWEEN_CLICKS)) / 1000 / 60);
   log('  Estimated time: ~' + totalTime + ' minutes for ' + intentList.length + ' intents.');
 
-  // Start from index 1 since we already did index 0
-  for (let i = 1; i < intentList.length; i++) {
+  for (let i = 0; i < intentList.length; i++) {
     const item = intentList[i];
 
-    // Take snapshot before click
-    const snapBefore = snapshotLeafTexts();
-
-    // Click the intent
+    // Click the intent node to open its detail panel on the left
     const treeContent = item._nodeEl.closest('.p-treenode-content') || item._nodeEl;
     treeContent.scrollIntoView({ block: 'center', behavior: 'instant' });
     treeContent.click();
+
     await sleep(CLICK_DELAY);
 
-    // Take snapshot after click
-    const snapAfter = snapshotLeafTexts();
-
-    // Find new text elements
-    const newItems = [];
-    for (const [path, txt] of snapAfter) {
-      if (!snapBefore.has(path)) {
-        newItems.push({ path, txt });
+    // Read phrases from the detail panel
+    const phrasesContainer = document.querySelector('.phrases-snippets-container');
+    if (phrasesContainer) {
+      // Get all individual phrase elements inside the container
+      const phraseEls = phrasesContainer.children;
+      const phrases = [];
+      for (const el of phraseEls) {
+        const txt = el.textContent.trim();
+        if (txt.length > 0) {
+          phrases.push(txt);
+        }
       }
-    }
-
-    // If we have a discovered selector, also try to match by selector
-    if (discoveredSelector) {
-      const els = document.querySelectorAll(discoveredSelector);
-      if (els.length > 0) {
-        const texts = Array.from(els)
-          .map(e => e.textContent.trim())
-          .filter(t => t.length >= 10 && !/^\d+(\.\d+)?%?$/.test(t));
-        if (texts.length > 0) {
-          item.examples = texts.join(', ');
+      if (phrases.length > 0) {
+        item.examples = phrases.join(', ');
+      } else {
+        // Fallback: get all text content from the container
+        const allText = phrasesContainer.innerText.trim();
+        if (allText) {
+          // Split on newlines in case phrases are line-separated
+          const lines = allText.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+          item.examples = lines.join(', ');
         }
       }
     }
 
-    // If selector didn't work, use the diff approach
-    if (!item.examples) {
-      const candidates = newItems.filter(ni => {
-        const t = ni.txt;
-        if (t.length < 15 || t.length > 500) return false;
-        if (/^\d+(\.\d+)?%?$/.test(t)) return false;
-        if (t === item.intent || t === item.category || t === item.topic) return false;
-        return true;
-      });
-      if (candidates.length > 0) {
-        item.examples = candidates.map(c => c.txt).join(', ');
-      }
-    }
-
     const exCount = item.examples ? item.examples.split(', ').length : 0;
-    logProgress(i + 1, intentList.length, item.category + ' > ' + item.topic + ' > ' + item.intent + ' (' + exCount + ' examples)');
+    logProgress(i + 1, intentList.length, item.category + ' > ' + item.topic + ' > ' + item.intent + ' (' + exCount + ' phrases)');
     await sleep(BETWEEN_CLICKS);
   }
-
-  // Log the first intent result (already scraped in discovery)
-  logProgress(1, intentList.length, firstItem.category + ' > ' + firstItem.topic + ' > ' + firstItem.intent + ' (' + (firstItem.examples ? firstItem.examples.split(', ').length : 0) + ' examples)');
 
   // Clean up DOM references
   const rows = intentList.map(function(item) {
@@ -305,8 +171,8 @@
     };
   });
 
-  // ── Step 6: Download ───────────────────────────────────────────────────
-  log('Step 5/5: Generating Excel file...');
+  // ── Step 5: Download ───────────────────────────────────────────────────
+  log('Step 4/4: Generating Excel file...');
   downloadExcel(rows);
 
   const categories = [];
