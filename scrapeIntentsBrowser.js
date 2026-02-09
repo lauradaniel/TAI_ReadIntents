@@ -118,6 +118,18 @@
   var totalTime = Math.ceil((intentList.length * (CLICK_DELAY + BETWEEN_CLICKS)) / 1000 / 60);
   log('  Estimated time: ~' + totalTime + ' minutes for ' + intentList.length + ' intents.');
 
+  // The first intent may already be selected/highlighted on page load,
+  // so clicking it won't trigger the detail panel to load. To fix this,
+  // click the second intent first (to deselect the first), then proceed
+  // normally starting from the first intent.
+  if (intentList.length > 1) {
+    const secondContent = intentList[1]._nodeEl.closest('.p-treenode-content') || intentList[1]._nodeEl;
+    secondContent.scrollIntoView({ block: 'center', behavior: 'instant' });
+    secondContent.click();
+    await sleep(CLICK_DELAY);
+    log('  Deselected first intent to ensure click registers.');
+  }
+
   for (let i = 0; i < intentList.length; i++) {
     const item = intentList[i];
 
@@ -141,19 +153,18 @@
         }
       }
       if (phrases.length > 0) {
-        item.examples = phrases.join(', ');
+        item.examples = phrases.join('\n');
       } else {
         // Fallback: get all text content from the container
         const allText = phrasesContainer.innerText.trim();
         if (allText) {
-          // Split on newlines in case phrases are line-separated
           const lines = allText.split('\n').map(l => l.trim()).filter(l => l.length > 0);
-          item.examples = lines.join(', ');
+          item.examples = lines.join('\n');
         }
       }
     }
 
-    const exCount = item.examples ? item.examples.split(', ').length : 0;
+    const exCount = item.examples ? item.examples.split('\n').length : 0;
     logProgress(i + 1, intentList.length, item.category + ' > ' + item.topic + ' > ' + item.intent + ' (' + exCount + ' phrases)');
     await sleep(BETWEEN_CLICKS);
   }
@@ -202,7 +213,7 @@
 
     function esc(s) {
       if (s == null) return '';
-      return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+      return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/\n/g,'&#10;');
     }
     function col(i) {
       var s = ''; i++;
@@ -219,7 +230,9 @@
       var rn = r + 2;
       sr += '<row r="' + rn + '">';
       for (var c2 = 0; c2 < keys.length; c2++) {
-        sr += '<c r="' + col(c2) + rn + '" t="inlineStr"><is><t>' + esc(data[r][keys[c2]] || '') + '</t></is></c>';
+        // Apply wrap-text style (s="2") to Examples column (index 5)
+        var style = c2 === 5 ? ' s="2"' : '';
+        sr += '<c r="' + col(c2) + rn + '" t="inlineStr"' + style + '><is><t>' + esc(data[r][keys[c2]] || '') + '</t></is></c>';
       }
       sr += '</row>';
     }
@@ -239,7 +252,7 @@
       '<fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><color rgb="FFFFFFFF"/><name val="Calibri"/></font></fonts>' +
       '<fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF4472C4"/></patternFill></fill></fills>' +
       '<borders count="1"><border/></borders><cellStyleXfs count="1"><xf/></cellStyleXfs>' +
-      '<cellXfs count="2"><xf/><xf fontId="1" fillId="2" applyFont="1" applyFill="1"><alignment horizontal="center" vertical="center"/></xf></cellXfs></styleSheet>';
+      '<cellXfs count="3"><xf/><xf fontId="1" fillId="2" applyFont="1" applyFill="1"><alignment horizontal="center" vertical="center"/></xf><xf applyAlignment="1"><alignment wrapText="1" vertical="top"/></xf></cellXfs></styleSheet>';
 
     var wbXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
       '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">' +
