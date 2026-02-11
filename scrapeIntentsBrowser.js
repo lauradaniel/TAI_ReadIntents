@@ -146,24 +146,11 @@
     // Read phrases from the detail panel
     const phrasesContainer = document.querySelector('.phrases-snippets-container');
     if (phrasesContainer) {
-      // Get all individual phrase elements inside the container
-      const phraseEls = phrasesContainer.children;
-      const phrases = [];
-      for (const el of phraseEls) {
-        const txt = el.textContent.trim();
-        if (txt.length > 0) {
-          phrases.push(txt);
-        }
-      }
-      if (phrases.length > 0) {
-        item.examples = phrases.join('\n');
-      } else {
-        // Fallback: get all text content from the container
-        const allText = phrasesContainer.innerText.trim();
-        if (allText) {
-          const lines = allText.split('\n').map(l => l.trim()).filter(l => l.length > 0);
-          item.examples = lines.join('\n');
-        }
+      // Get all text from the container, split by newlines
+      const allText = phrasesContainer.innerText.trim();
+      if (allText) {
+        const lines = allText.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+        item.examples = lines.join('\n');
       }
     }
 
@@ -243,7 +230,9 @@
       for (var c2 = 0; c2 < keys.length; c2++) {
         // Apply wrap-text style (s="2") to Examples column (index 5)
         var style = c2 === 5 ? ' s="2"' : '';
-        sr += '<c r="' + col(c2) + rn + '" t="inlineStr"' + style + '><is><t>' + esc(data[r][keys[c2]] || '') + '</t></is></c>';
+        var val = esc(data[r][keys[c2]] || '');
+        var preserveSpace = val.indexOf('&#10;') !== -1 ? ' xml:space="preserve"' : '';
+        sr += '<c r="' + col(c2) + rn + '" t="inlineStr"' + style + '><is><t' + preserveSpace + '>' + val + '</t></is></c>';
       }
       sr += '</row>';
     }
