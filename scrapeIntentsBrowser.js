@@ -104,7 +104,7 @@
         intentPercentage: pct,
         volume: '',
         examples: '',
-        active: activeText,
+        tag: activeText,
         _nodeEl: node,
       });
     }
@@ -146,19 +146,34 @@
     // Read phrases from the detail panel
     const phrasesContainer = document.querySelector('.phrases-snippets-container');
     if (phrasesContainer) {
-      // Get all text from the container, split by newlines
-      const allText = phrasesContainer.innerText.trim();
-      if (allText) {
-        const lines = allText.split('\n').map(l => l.trim()).filter(l => l.length > 0);
-        item.examples = lines.join('\n');
+      // Query all deepest-level elements that hold individual phrase text
+      const allEls = phrasesContainer.querySelectorAll('*');
+      const phrases = [];
+      for (const el of allEls) {
+        // Only pick leaf elements (no child elements, just text)
+        if (el.children.length === 0) {
+          const txt = el.textContent.trim();
+          if (txt.length > 0) {
+            phrases.push(txt);
+          }
+        }
+      }
+      if (phrases.length > 1) {
+        item.examples = phrases.join('\n');
+      } else {
+        // Fallback: treat the whole container text as a single block
+        const raw = phrasesContainer.textContent.trim();
+        if (raw) {
+          item.examples = raw;
+        }
       }
     }
 
     // If Active wasn't found during tree collection, try again now
-    if (!item.active) {
+    if (!item.tag) {
       const activeEl = item._nodeEl.querySelector('.new-item-label');
       if (activeEl) {
-        item.active = activeEl.textContent.trim();
+        item.tag = activeEl.textContent.trim();
       }
     }
 
@@ -176,7 +191,7 @@
       intentPercentage: item.intentPercentage,
       volume: item.volume,
       examples: item.examples,
-      active: item.active
+      tag: item.tag
     };
   });
 
@@ -206,8 +221,8 @@
   // ────────────────────────────────────────────────────────────────────────
 
   function downloadExcel(data) {
-    var headers = ['Category','Topic','Intent','Intent Percentage','Volume','Examples','Active'];
-    var keys = ['category','topic','intent','intentPercentage','volume','examples','active'];
+    var headers = ['Category','Topic','Intent','Intent Percentage','Volume','Examples','Tag'];
+    var keys = ['category','topic','intent','intentPercentage','volume','examples','tag'];
 
     function esc(s) {
       if (s == null) return '';
