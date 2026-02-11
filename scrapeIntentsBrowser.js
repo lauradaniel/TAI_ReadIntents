@@ -245,9 +245,21 @@
       for (var c2 = 0; c2 < keys.length; c2++) {
         // Apply wrap-text style (s="2") to Examples column (index 5)
         var style = c2 === 5 ? ' s="2"' : '';
-        var val = esc(data[r][keys[c2]] || '');
-        var preserveSpace = val.indexOf('&#10;') !== -1 ? ' xml:space="preserve"' : '';
-        sr += '<c r="' + col(c2) + rn + '" t="inlineStr"' + style + '><is><t' + preserveSpace + '>' + val + '</t></is></c>';
+        var rawVal = data[r][keys[c2]] || '';
+
+        // Intent Percentage column (index 3) — store as number
+        if (c2 === 3) {
+          var num = parseFloat(String(rawVal).replace('%', ''));
+          if (!isNaN(num)) {
+            sr += '<c r="' + col(c2) + rn + '" s="3"><v>' + num + '</v></c>';
+          } else {
+            sr += '<c r="' + col(c2) + rn + '" t="inlineStr"><is><t>' + esc(rawVal) + '</t></is></c>';
+          }
+        } else {
+          var val = esc(rawVal);
+          var preserveSpace = val.indexOf('&#10;') !== -1 ? ' xml:space="preserve"' : '';
+          sr += '<c r="' + col(c2) + rn + '" t="inlineStr"' + style + '><is><t' + preserveSpace + '>' + val + '</t></is></c>';
+        }
       }
       sr += '</row>';
     }
@@ -267,7 +279,8 @@
       '<fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><color rgb="FFFFFFFF"/><name val="Calibri"/></font></fonts>' +
       '<fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF4472C4"/></patternFill></fill></fills>' +
       '<borders count="1"><border/></borders><cellStyleXfs count="1"><xf/></cellStyleXfs>' +
-      '<cellXfs count="3"><xf/><xf fontId="1" fillId="2" applyFont="1" applyFill="1"><alignment horizontal="center" vertical="center"/></xf><xf applyAlignment="1"><alignment wrapText="1" vertical="top"/></xf></cellXfs></styleSheet>';
+      '<numFmts count="1"><numFmt numFmtId="164" formatCode="0.00"/></numFmts>' +
+      '<cellXfs count="4"><xf/><xf fontId="1" fillId="2" applyFont="1" applyFill="1"><alignment horizontal="center" vertical="center"/></xf><xf applyAlignment="1"><alignment wrapText="1" vertical="top"/></xf><xf numFmtId="164" applyNumberFormat="1"/></cellXfs></styleSheet>';
 
     var wbXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
       '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">' +
