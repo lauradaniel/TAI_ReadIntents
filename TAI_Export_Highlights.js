@@ -40,6 +40,37 @@
     console.log('%c[CXOne Scraper] WARNING: ' + msg, 'color: #FF9800; font-weight: bold;');
   }
 
+  // ── Dynamic Filename Builder ──────────────────────────────────────────
+  function buildFileName() {
+    var parts = [];
+
+    // 1. Company name from aptrinsic('identify', ...) script
+    var companyName = '';
+    var scripts = document.querySelectorAll('script');
+    for (var s = 0; s < scripts.length; s++) {
+      var text = scripts[s].textContent || '';
+      var match = text.match(/aptrinsic\s*\(\s*['"]identify['"]\s*,[\s\S]*?,\s*\{[^}]*"name"\s*:\s*"([^"]+)"/);
+      if (match) { companyName = match[1].trim(); break; }
+    }
+    if (companyName) parts.push(companyName.replace(/\s+/g, '_'));
+
+    // 2. Model name from .model-selection-dropdown-wrapper span[data-aid="ellipsis-sliced-text"]
+    var modelEl = document.querySelector('.model-selection-dropdown-wrapper span[data-aid="ellipsis-sliced-text"]');
+    var modelName = modelEl ? modelEl.textContent.trim() : '';
+    if (modelName) parts.push(modelName.replace(/\s+/g, '_'));
+
+    // 3. Date from span.version-creation-date
+    var dateEl = document.querySelector('span.version-creation-date');
+    var dateStr = dateEl ? dateEl.textContent.trim() : '';
+    if (dateStr) parts.push(dateStr.replace(/\s+/g, '_'));
+
+    // Combine with underscores; fallback if nothing was found
+    var name = parts.length > 0 ? parts.join('_') : 'CXOne_Intents_Output';
+    // Remove any characters that are unsafe for filenames
+    name = name.replace(/[\/\\:*?"<>|]/g, '_');
+    return name;
+  }
+
   // ── Step 1: Verify page ────────────────────────────────────────────────
   log('Starting CXOne Intent Scraper...');
 
@@ -194,7 +225,9 @@
 
   // ── Step 5: Download ───────────────────────────────────────────────────
   log('Step 4/4: Generating Excel file...');
-  downloadExcel(rows);
+  var baseFileName = buildFileName();
+  log('  Filename: ' + baseFileName);
+  downloadExcel(rows, baseFileName);
 
   const categories = [];
   const seen = {};
@@ -206,7 +239,7 @@
   log('  Categories:      ' + categories.length);
   log('  Total intents:   ' + rows.length);
   log('  With examples:   ' + withExamples);
-  log('  File downloaded: CXOne_Intents_Output.xlsx');
+  log('  File downloaded: ' + baseFileName + '.xlsx');
 
   console.table(rows.slice(0, 10));
   if (rows.length > 10) {
@@ -217,7 +250,7 @@
   //  XLSX Generator + CSV + ZIP (zero dependencies)
   // ────────────────────────────────────────────────────────────────────────
 
-  function downloadExcel(data) {
+  function downloadExcel(data, baseFileName) {
     var headers = ['Category','Topic','Intent','Intent Percentage','Volume','Examples','Tag'];
     var keys = ['category','topic','intent','intentPercentage','volume','examples','tag'];
 
@@ -310,7 +343,7 @@
       {name:'xl/worksheets/sheet1.xml', content:sheetXml}
     ]);
 
-    dl(blob, 'CXOne_Intents_Output.xlsx');
+    dl(blob, baseFileName + '.xlsx');
     log('  Excel file download triggered.');
 
     // CSV backup
@@ -318,7 +351,7 @@
     for (var ri = 0; ri < data.length; ri++) {
       csv.push(keys.map(function(k) { return '"' + (data[ri][k]||'').replace(/"/g,'""') + '"'; }).join(','));
     }
-    dl(new Blob([csv.join('\n')], {type:'text/csv'}), 'CXOne_Intents_Output.csv');
+    dl(new Blob([csv.join('\n')], {type:'text/csv'}), baseFileName + '.csv');
     log('  CSV backup also downloaded.');
   }
 
